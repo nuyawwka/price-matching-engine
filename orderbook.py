@@ -85,7 +85,7 @@ class Order(object):
 
     def __init__(self, order_book, qty, price, expiry):
         self.oid = next(Order._oid)
-        self.status = 'ACTIVE'
+        self.status = ['LIVE']
         self.order_book = order_book
         self.qty1 = qty
         self.qty2 = qty
@@ -157,23 +157,23 @@ class OrderBook(object):
         self.clock = PseudoClock(start_time=start_time or datetime.now())
         self.nt = namedtuple('fill', ['price', 'qty', 'bidID', 'bidRemaining', 'askID', 'askRemaining', 'time'])
 
-    @staticmethod
-    def cancel_order(order):
-        order.status = 'CANCELLED'
+    def cancel_order(self, order, sys=False):
+        order.status.append('SYS_CANCELLED' if sys else 'USER_CANCELLED')
         order.delete()
+
 
     def submit_order(self, bid_or_ask, qty, price=None, expiry=None):
         order = factory(self, bid_or_ask, qty, price, expiry)
         self.match_order(order)
-        if order.status == 'ACTIVE' and order.type == 'MARKET':
-            self.cancel_order(order)         
+        if order.type == 'MARKET' and order.status[-1] != 'FILLED':
+            self.cancel_order(order, sys=True)         
         return order
 
     def match_order(self, taker): 
         while True:
             now = self.clock.now()
             if taker.expiry < now:
-                taker.status = 'EXPIRED'
+                taker.status.append('EXPIRED')
                 taker.delete()
                 break
             if not taker.contra:
@@ -183,7 +183,7 @@ class OrderBook(object):
                 break
             maker = orders.head.data
             if maker.expiry < now:
-                maker.status = 'EXPIRED'
+                maker.status.append('EXPIRED')
                 maker.delete()
                 continue
             seq = next(OrderBook._seq)
@@ -194,23 +194,27 @@ class OrderBook(object):
             taker.seqs.append(seq)
             self.audit[seq] = self.nt(price, num, taker.oid, taker.qty2, maker.oid, maker.qty2, now)
             if maker.qty2 <= 0:
-                maker.status = 'FILLED'
+                maker.status.append('FILLED')
                 maker.delete()
+            else:
+                maker.status.append('PARTIAL_FILL')
             if taker.qty2 <= 0:
-                taker.status = 'FILLED'
+                taker.status.append('FILLED')
                 taker.delete()
                 break
+            else:
+                taker.status.append('PARTIAL_FILL')
 
-#-----------------------------------------------------------------------
+#----------------------------------------------------------------------------
 
 if __name__ == '__main__':
     obook  = OrderBook('AAPL', start_time=datetime(2026, 4, 1))
     order1 = obook.submit_order(bid_or_ask='BID', qty=150, price=D('100.55'))
     order2 = obook.submit_order(bid_or_ask='BID', qty=200, price=D('100.55'))
     order3 = obook.submit_order(bid_or_ask='BID', qty=100, price=D('100.55'), expiry=datetime(2026, 3, 31))
+    obook.cancel_order(order2)
     order4 = obook.submit_order(bid_or_ask='ASK', qty=125, price=D('100.25'))
     order5 = obook.submit_order(bid_or_ask='ASK', qty=325, price=None)
-    status = obook.cancel_order(order2)
 
     for o in (order1, order2, order3, order4, order5):
         print('order %d, %s.%s, %s' % (o.oid, o.type, o.base, o.status))
