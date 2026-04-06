@@ -3,11 +3,6 @@ from   decimal          import Decimal as D
 from   itertools        import count
 from   collections      import namedtuple
 from   datetime         import datetime, timedelta
-import logging
-
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 class PseudoClock(object):
@@ -97,12 +92,10 @@ class Order(object):
         self.price = price
         self.created = order_book.clock.now()
         self.expiry = expiry or order_book.clock.eod
-
-    def __str__(self):
-        return str({k:v for k,v in self.__dict__.items() if k != 'side'})
+        self.seqs = []
 
 
-class BidSide(Order):
+class Bid(Order):
     def __init__(self, *args, **argv):
         super().__init__(*args, **argv)
         self.side = self.order_book.bids
@@ -112,7 +105,7 @@ class BidSide(Order):
         return price > self.price
 
 
-class AskSide(Order):
+class Ask(Order):
     def __init__(self, *args, **argv):
         super().__init__(*args, **argv)
         self.side = self.order_book.asks
@@ -123,10 +116,11 @@ class AskSide(Order):
 
 
 def factory(order_book, bid_or_ask, qty, price=None, expiry=None):
-    class LimOrder(AskSide if bid_or_ask == 'ASK' else BidSide):
+    class Limit(Ask if bid_or_ask == 'ASK' else Bid):
         def __init__(self):
             super().__init__(order_book, qty, price, expiry)
             self.type = 'LIMIT'
+            self.base = bid_or_ask
             self.order_book.node_map[self.oid] = Node(self)
             self.side[self.price].append(self.order_book.node_map[self.oid])
 
@@ -135,10 +129,11 @@ def factory(order_book, bid_or_ask, qty, price=None, expiry=None):
             if not self.side[self.price].head:
                 del self.side[self.price]
         
-    class MktOrder(AskSide if bid_or_ask == 'ASK' else BidSide):
+    class Market(Ask if bid_or_ask == 'ASK' else Bid):
         def __init__(self):
             super().__init__(order_book, qty, price, expiry)
             self.type = 'MARKET'
+            self.base = bid_or_ask
 
         #-------------------------------------------------------------------#
         # market orders do not live in book - dummy delete simplifies logic #
@@ -147,21 +142,20 @@ def factory(order_book, bid_or_ask, qty, price=None, expiry=None):
         def delete(self):
             pass
 
-    return LimOrder() if price else MktOrder()
+    return Limit() if price else Market()
 
 
 class OrderBook(object):
     _seq = count(1)
 
-    def __init__(self, ticker, start_time=None, verbose=False):
+    def __init__(self, ticker, start_time=None):
         self.ticker = ticker
-        self.verbose = verbose
         self.asks = DefaultSortedDict(default=LinkedList)
         self.bids = DefaultSortedDict(default=LinkedList, reverse=True)
         self.audit = {}
         self.node_map = {}
         self.clock = PseudoClock(start_time=start_time or datetime.now())
-        self.nt = namedtuple('fill', ['seq', 'price', 'qty', 'bidID', 'bidRemaining', 'askID', 'askRemaining', 'time'])
+        self.nt = namedtuple('fill', ['price', 'qty', 'bidID', 'bidRemaining', 'askID', 'askRemaining', 'time'])
 
     @staticmethod
     def cancel_order(order):
@@ -173,9 +167,6 @@ class OrderBook(object):
         self.match_order(order)
         if order.status == 'ACTIVE' and order.type == 'MARKET':
             self.cancel_order(order)         
-        if self.verbose:
-            logger.info(type(order).__name__, order)
-            logger.info([val for _, val in sorted(self.audit.items())])
         return order
 
     def match_order(self, taker): 
@@ -199,7 +190,9 @@ class OrderBook(object):
             num = min(taker.qty2, maker.qty2)
             taker.qty2 -= num
             maker.qty2 -= num
-            self.audit[seq] = self.nt(seq, price, num, taker.oid, taker.qty2, maker.oid, maker.qty2, now)
+            maker.seqs.append(seq)
+            taker.seqs.append(seq)
+            self.audit[seq] = self.nt(price, num, taker.oid, taker.qty2, maker.oid, maker.qty2, now)
             if maker.qty2 <= 0:
                 maker.status = 'FILLED'
                 maker.delete()
@@ -211,10 +204,15 @@ class OrderBook(object):
 #-----------------------------------------------------------------------
 
 if __name__ == '__main__':
-    obook  = OrderBook('AAPL', start_time=datetime(2026, 4, 1), verbose=True)
+    obook  = OrderBook('AAPL', start_time=datetime(2026, 4, 1))
     order1 = obook.submit_order(bid_or_ask='BID', qty=150, price=D('100.55'))
     order2 = obook.submit_order(bid_or_ask='BID', qty=200, price=D('100.55'))
     order3 = obook.submit_order(bid_or_ask='BID', qty=100, price=D('100.55'), expiry=datetime(2026, 3, 31))
     order4 = obook.submit_order(bid_or_ask='ASK', qty=125, price=D('100.25'))
     order5 = obook.submit_order(bid_or_ask='ASK', qty=325, price=None)
     status = obook.cancel_order(order2)
+
+    for o in (order1, order2, order3, order4, order5):
+        print('order %d, %s.%s, %s' % (o.oid, o.type, o.base, o.status))
+        for seq in o.seqs:
+            print(obook.audit[seq])
