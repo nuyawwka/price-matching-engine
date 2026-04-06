@@ -85,7 +85,7 @@ class Order(object):
 
     def __init__(self, order_book, qty, price, expiry):
         self.oid = next(Order._oid)
-        self.status = ['LIVE']
+        self.status = ['CREATED']
         self.order_book = order_book
         self.qty1 = qty
         self.qty2 = qty
