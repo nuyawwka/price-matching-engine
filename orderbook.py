@@ -11,13 +11,13 @@ logging.basicConfig(level=logging.INFO)
 
 
 class PseudoClock(object):
-    def __init__(self, start_time, inc=1):
+    def __init__(self, start_time, seconds=1):
         self.start_time = start_time
-        self.inc = inc
+        self.seconds = seconds
         self.eod = start_time.replace(hour=16, minute=0, second=0, microsecond=0)
 
     def now(self):
-        self.start_time += timedelta(minutes=self.inc)
+        self.start_time += timedelta(seconds=self.seconds)
         return self.start_time
 
 
