@@ -161,7 +161,6 @@ class OrderBook(object):
         order.status.append('SYS_CANCELLED' if sys else 'USER_CANCELLED')
         order.delete()
 
-
     def submit_order(self, bid_or_ask, qty, price=None, expiry=None):
         order = factory(self, bid_or_ask, qty, price, expiry)
         self.match_order(order)
