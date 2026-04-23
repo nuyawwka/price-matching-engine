@@ -89,7 +89,7 @@ class DirectAddressList(object):
     def key_to_idx(self, key):
         if self.base is None:
             self.base = key
-        return int((key - self.base) * D(100))
+        return int((key - self.base) * 100)
 
     def peek(self):
         return (self.best, self[self.best].head.data)
